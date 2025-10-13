@@ -1,0 +1,26 @@
+# Python / Virtualenv
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Local DB & data
+backend/*.db
+backend/*_data/
+backend/storage/
+*.sqlite
+*.sqlite3
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Node (if you later add a separate frontend)
+node_modules/
+dist/
+.build/

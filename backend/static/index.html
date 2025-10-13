@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CloudDrive • Multi‑Device Storage</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body class="bg-slate-50 text-slate-800">
+    <!-- Auth Screens -->
+    <div id="auth-screen" class="min-h-screen flex items-center justify-center p-6">
+      <div class="w-full max-w-md bg-white rounded-2xl shadow p-6">
+        <h1 class="text-2xl font-semibold mb-4 text-center">CloudDrive</h1>
+        <div class="space-y-3">
+          <input id="email" type="email" placeholder="Email" class="w-full border p-2 rounded" />
+          <input id="password" type="password" placeholder="Password" class="w-full border p-2 rounded" />
+          <div class="flex gap-2">
+            <button id="btn-login" class="flex-1 bg-slate-900 text-white rounded p-2">Sign in</button>
+            <button id="btn-register" class="flex-1 bg-slate-200 rounded p-2">Create account</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- App Shell -->
+    <div id="app-shell" class="hidden min-h-screen">
+      <div class="flex">
+        <!-- Sidebar -->
+        <aside class="w-64 bg-white border-r min-h-screen p-4">
+          <div class="flex items-center gap-3 mb-6">
+            <div class="h-9 w-9 rounded-xl bg-slate-900 text-white grid place-items-center">CD</div>
+            <div>
+              <div class="font-semibold">CloudDrive</div>
+              <div class="text-xs text-slate-500">Multi-Device Storage</div>
+            </div>
+          </div>
+
+          <nav class="space-y-2">
+            <button data-view="dashboard" class="nav-btn w-full text-left px-3 py-2 rounded hover:bg-slate-100">Dashboard</button>
+            <button data-view="devices" class="nav-btn w-full text-left px-3 py-2 rounded hover:bg-slate-100">My Devices</button>
+            <button data-view="files" class="nav-btn w-full text-left px-3 py-2 rounded hover:bg-slate-100">Files</button>
+            <button data-view="settings" class="nav-btn w-full text-left px-3 py-2 rounded hover:bg-slate-100">Settings</button>
+          </nav>
+
+          <div class="mt-10 text-sm text-slate-500" id="user-email"></div>
+          <button id="logout" class="mt-2 text-sm underline">Logout</button>
+        </aside>
+
+        <!-- Main -->
+        <main class="flex-1 p-8 space-y-8">
+          <!-- Dashboard -->
+          <section id="view-dashboard" class="view hidden">
+            <h1 class="text-3xl font-bold">Dashboard</h1>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div class="rounded-xl bg-white p-4 shadow-sm border">
+                <div class="text-slate-500">Total Devices</div>
+                <div class="text-3xl font-semibold" id="stat-devices">0</div>
+              </div>
+              <div class="rounded-xl bg-white p-4 shadow-sm border">
+                <div class="text-slate-500">Total Storage</div>
+                <div class="text-3xl font-semibold"><span id="stat-total-storage">0</span> GB</div>
+              </div>
+              <div class="rounded-xl bg-white p-4 shadow-sm border">
+                <div class="text-slate-500">Used Storage</div>
+                <div class="text-3xl font-semibold"><span id="stat-used-storage">0</span> GB</div>
+              </div>
+              <div class="rounded-xl bg-white p-4 shadow-sm border">
+                <div class="text-slate-500">Total Files</div>
+                <div class="text-3xl font-semibold" id="stat-files">0</div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div class="bg-white rounded-xl p-4 shadow-sm border">
+                <h2 class="font-semibold mb-2">Storage Overview</h2>
+                <canvas id="chart-overview" height="200"></canvas>
+              </div>
+              <div class="bg-white rounded-xl p-4 shadow-sm border">
+                <h2 class="font-semibold mb-3">Connected Devices</h2>
+                <div id="connected-devices" class="space-y-3"></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Devices -->
+          <section id="view-devices" class="view hidden">
+            <div class="flex items-center justify-between mb-4">
+              <h1 class="text-2xl font-bold">My Devices</h1>
+              <button id="btn-add-device" class="px-3 py-1.5 rounded border">Add device</button>
+            </div>
+            <div id="devices-list"></div>
+          </section>
+
+          <!-- Files -->
+          <section id="view-files" class="view hidden">
+            <div class="flex items-center justify-between">
+              <h1 class="text-3xl font-bold">Files</h1>
+              <form id="upload-form" class="flex items-center gap-2">
+                <input type="file" id="file-input" class="border rounded p-1">
+                <select id="assign-select" multiple class="border rounded p-1"></select>
+                <button class="bg-slate-900 text-white px-3 py-2 rounded">Upload</button>
+              </form>
+            </div>
+            <div class="mt-4 bg-white rounded-xl border shadow-sm overflow-hidden">
+              <table class="w-full text-left">
+                <thead class="bg-slate-50 text-sm">
+                  <tr>
+                    <th class="p-3">Name</th>
+                    <th class="p-3">Size</th>
+                    <th class="p-3">On Devices</th>
+                    <th class="p-3"></th>
+                  </tr>
+                </thead>
+                <tbody id="files-tbody" class="text-sm"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <!-- Settings -->
+          <section id="view-settings" class="view hidden">
+            <h1 class="text-3xl font-bold">Settings</h1>
+            <p class="text-slate-600">This demo stores files locally on the server under <code>/backend/storage</code>. For production, configure cloud/object storage and move secrets to environment variables.</p>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+  </body>
+</html>
