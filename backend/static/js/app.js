@@ -14,6 +14,19 @@ const API = {
 };
 
 // ---- Helpers ----
+
+function isOnline(lastSeenIso, thresholdSec = 90){
+  if (!lastSeenIso) return false;
+  const last = new Date(lastSeenIso).getTime();
+  return (Date.now() - last) / 1000 < thresholdSec;
+}
+function fmtBytes(n){
+  if (n == null) return "0 B";
+  const u = ["B","KB","MB","GB","TB"]; let i=0;
+  while (n >= 1024 && i < u.length-1){ n/=1024; i++; }
+  return `${n.toFixed(1)} ${u[i]}`;
+}
+
 async function copyText(txt){
   try { await navigator.clipboard.writeText(txt); alert('Copied'); }
   catch {
@@ -195,46 +208,56 @@ document.getElementById('btn-add-device').onclick = async () => {
 
 async function loadDevices(){
   const list = document.getElementById('devices-list') 
-           || document.getElementById('device-grid');  // <- fallback
+            || document.getElementById('device-grid');  // fallback
   if (!list) { console.log('No devices container found'); return; }
   list.innerHTML = '';
 
   let devices = [];
   try {
-    // use whichever you already have defined:
-    devices = (typeof API !== 'undefined' && API.devices) ? await API.devices()
-                                                          : await authFetch('/api/devices');
+    devices = (typeof API !== 'undefined' && API.devices)
+      ? await API.devices()
+      : await authFetch('/api/devices');
   } catch (e) {
     alert('Failed to load devices: ' + (e.message || e));
     return;
   }
 
-  console.log('Rendering devices:', devices.length); // <-- debug marker
+  console.log('Rendering devices:', devices.length);
 
   devices.forEach(dev => {
-    const usedBytes = dev.used_bytes || 0;
-    const capBytes  = (dev.capacity_gb || 0) * Math.pow(1024,3);
-    const pct       = capBytes ? Math.min(100, (usedBytes/capBytes)*100) : 0;
-    const freeGB    = (dev.free_bytes || 0) / Math.pow(1024,3);
+    const usedBytes = Number(dev.used_bytes || 0);
+    const capBytes  = Number(dev.capacity_gb || 0) * 1024 ** 3;
+    const pct       = capBytes ? Math.min(100, (usedBytes / capBytes) * 100) : 0;
+
+    const online = isOnline(dev.last_seen);
+    const statusPill = `<span class="px-2 py-0.5 rounded-full text-xs ${online ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-600'}">
+      ${online ? 'Online' : 'Offline'}
+    </span>`;
+
+    const lastSeenStr = dev.last_seen ? ` • seen ${timeAgo(dev.last_seen)}` : '';
 
     const card = document.createElement('div');
     card.className = 'border rounded-lg p-4 shadow-sm bg-white mb-4';
     card.innerHTML = `
       <div class="flex items-center justify-between">
         <div class="text-xl font-semibold">${dev.name}</div>
-        <div class="text-xs ${dev.is_online ? 'text-green-600' : 'text-slate-500'}">
-          ${dev.is_online ? '● online' : '● offline'}
-        </div>
+        ${statusPill}
       </div>
-      <div class="mt-2 text-sm text-slate-600">Storage • ${dev.capacity_gb ?? 0} GB</div>
+
+      <div class="mt-2 text-sm text-slate-600">
+        Storage • ${dev.capacity_gb ?? 0} GB
+      </div>
+
       <div class="w-full h-2 bg-slate-100 rounded mt-2 overflow-hidden">
-        <div class="h-2 bg-slate-900" style="width:${pct.toFixed(1)}%"></div>
+        <div class="h-2 bg-emerald-500" style="width:${pct.toFixed(1)}%"></div>
       </div>
+
       <div class="mt-1 text-xs text-slate-500">
-        ${(usedBytes/Math.pow(1024,3)).toFixed(1)} GB used
-        ${freeGB ? ` • ${freeGB.toFixed(1)} GB free` : ''}
-        ${dev.last_sync ? ` • hb: ${timeAgo(dev.last_sync)}` : ''}
+        ${fmtBytes(usedBytes)} used
+        ${dev.free_bytes ? ` • ${fmtBytes(dev.free_bytes)} free` : ''}
+        ${lastSeenStr}
       </div>
+
       <div class="mt-3 flex gap-2">
         <button class="px-3 py-1.5 rounded border" data-act="token">Issue Token</button>
         <button class="px-3 py-1.5 rounded border border-red-400 text-red-600" data-act="delete">Unbind</button>
@@ -248,7 +271,9 @@ async function loadDevices(){
         const t = r.device_token;
         alert(`Device token issued:\n\n${t}`);
         try { await navigator.clipboard.writeText(t); } catch {}
-      } catch (e) { alert(e.message); }
+      } catch (e) {
+        alert(e.message || 'Failed to issue token');
+      }
     };
 
     const btnDelete = card.querySelector('[data-act="delete"]');

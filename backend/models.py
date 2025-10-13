@@ -25,12 +25,13 @@ class Device(Base):
     is_online = Column(Boolean, default=True)
     last_sync = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
-
-    # agent auth + live capacity
     device_token = Column(String, unique=True, index=True, nullable=True)
     platform     = Column(String, default="unknown")
     root_path    = Column(String, nullable=True)
     free_bytes   = Column(BigInteger, default=0)
+    last_seen = Column(DateTime)                   
+    total_bytes = Column(BigInteger, default=0)    
+    used_bytes  = Column(BigInteger, default=0)      
 
     owner = relationship("User", back_populates="devices")
     assignments = relationship("FileAssignment", back_populates="device", cascade="all, delete-orphan")

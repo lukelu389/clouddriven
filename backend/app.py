@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request, Header
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,14 +9,27 @@ import secrets
 from datetime import datetime
 from typing import Optional, List
 import os, shutil, json
-
 from .database import SessionLocal, engine, Base
-from . import models
-from backend.database import SessionLocal, engine, Base
 import backend.models as models
 from backend.auth import create_access_token, decode_token, get_password_hash, verify_password, get_current_user, get_db
+from pydantic import BaseModel
 
-# Init DB
+
+device_security = HTTPBearer(auto_error=False)
+
+def get_device_by_token(
+    creds: HTTPAuthorizationCredentials = Depends(device_security),
+    db: Session = Depends(get_db),
+):
+    if not creds or not creds.credentials:
+        raise HTTPException(401, "Missing device token")
+    tok = creds.credentials
+    d = db.query(models.Device).filter(models.Device.device_token == tok).first()
+    if not d:
+        raise HTTPException(401, "Invalid device token")
+    return d
+
+
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="CloudDrive", version="0.1.0")
@@ -98,6 +111,9 @@ def login(email: str = Form(...), password: str = Form(...), db: Session = Depen
     token = create_access_token({"sub": user.id, "email": user.email})
     return {"token": token, "user": {"id": user.id, "email": user.email}}
 
+@app.get("/api/auth/whoami")
+def whoami(current: models.User = Depends(get_current_user)):
+    return {"id": current.id, "email": current.email}
 # ---------------------- Devices ----------------------
 from sqlalchemy import func
 
@@ -257,17 +273,49 @@ def delete_file(file_id: int, current: models.User = Depends(get_current_user), 
     db.commit()
     return {"ok": True}
 
+BYTES_PER_GB = 1024 ** 3
+
 @app.post("/api/files/{file_id}/assign")
-def assign_file(file_id: int, device_id: int = Form(...), current: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    f = db.query(models.File).filter(models.File.id == file_id, models.File.user_id == current.id).first()
-    d = db.query(models.Device).filter(models.Device.id == device_id, models.Device.user_id == current.id).first()
+def assign_file(
+    file_id: int,
+    device_id: int = Form(...),
+    current: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # load entities (owned by user)
+    f = db.query(models.File).filter(models.File.id == file_id,
+                                     models.File.user_id == current.id).first()
+    d = db.query(models.Device).filter(models.Device.id == device_id,
+                                       models.Device.user_id == current.id).first()
     if not f or not d:
         raise HTTPException(status_code=404, detail="File or device not found")
-    # Check unique
-    existing = db.query(models.FileAssignment).filter(models.FileAssignment.file_id == f.id, models.FileAssignment.device_id == d.id).first()
-    if existing:
-        return {"ok": True}
-    db.add(models.FileAssignment(file_id=f.id, device_id=d.id, status="pending"))
+
+    exists = db.query(models.DeviceFile)\
+        .filter(models.DeviceFile.device_id == d.id,
+                models.DeviceFile.file_id == f.id).first()
+    if exists:
+        return {"ok": True}  # idempotent
+
+
+    assigned_bytes = db.query(func.coalesce(func.sum(models.File.size_bytes), 0))\
+        .select_from(models.DeviceFile)\
+        .join(models.File, models.File.id == models.DeviceFile.file_id)\
+        .filter(models.DeviceFile.device_id == d.id).scalar()
+
+    capacity_bytes = int((d.capacity_gb or 0) * BYTES_PER_GB)
+    projected = assigned_bytes + int(f.size_bytes or 0)
+
+    if capacity_bytes <= 0:
+        raise HTTPException(400, "This device has zero capacity configured.")
+
+    if capacity_bytes and projected > capacity_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Assignment exceeds device capacity ({projected} > {capacity_bytes} bytes)."
+        )
+
+    link = models.DeviceFile(device_id=d.id, file_id=f.id)
+    db.add(link)
     db.commit()
     return {"ok": True}
 
@@ -296,24 +344,62 @@ def issue_device_token(device_id: int, current=Depends(get_current_user), db: Se
     return {"device_token": d.device_token}
 
 # Device agent auth dependency
-from fastapi import Header
 def get_device(db: Session = Depends(get_db), x_device_token: str | None = Header(None)):
     if not x_device_token: raise HTTPException(401, "Missing X-Device-Token")
     d = db.query(models.Device).filter_by(device_token=x_device_token).first()
     if not d: raise HTTPException(401, "Invalid device token")
     return d
 
-# Agent heartbeat + capacity report
+
+class HeartbeatIn(BaseModel):
+    total_bytes: int | None = None
+    free_bytes:  int | None = None
+    used_bytes:  int | None = None
+
 @app.post("/api/agent/heartbeat")
-def agent_heartbeat(free_bytes: int = Form(...), root_path: str = Form(""), platform: str = Form("unknown"),
-                    device=Depends(get_device), db: Session=Depends(get_db)):
-    device.free_bytes = free_bytes
-    device.platform = platform
-    if root_path: device.root_path = root_path
-    device.last_sync = datetime.utcnow()
-    db.add(models.DeviceHeartbeat(device_id=device.id, free_bytes=free_bytes))
+def agent_heartbeat(
+    hb: HeartbeatIn,
+    device: models.Device = Depends(get_device_by_token),
+    db: Session = Depends(get_db),
+):
+    device.last_seen = datetime.utcnow()
+    if hb.total_bytes is not None: device.total_bytes = hb.total_bytes
+    if hb.free_bytes  is not None: device.free_bytes  = hb.free_bytes
+    if hb.used_bytes  is not None: device.used_bytes  = hb.used_bytes
+    db.add(models.DeviceHeartbeat(device_id=device.id,
+                                  total_bytes=hb.total_bytes,
+                                  free_bytes=hb.free_bytes,
+                                  used_bytes=hb.used_bytes))
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "device_id": device.id, "last_seen": device.last_seen.isoformat()}
+
+@app.post("/api/devices/{device_id}/heartbeat")
+def device_heartbeat(
+    device_id: int,
+    hb: HeartbeatIn,
+    current: models.User = Depends(get_current_user), 
+    db: Session = Depends(get_db),
+):
+    d = db.query(models.Device).filter(models.Device.id == device_id,
+                                       models.Device.user_id == current.id).first()
+    if not d:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    # upsert device live info
+    d.last_seen = datetime.utcnow()
+    if hb.total_bytes is not None: d.total_bytes = hb.total_bytes
+    if hb.free_bytes  is not None: d.free_bytes  = hb.free_bytes
+    if hb.used_bytes  is not None: d.used_bytes  = hb.used_bytes
+
+    db.add(models.DeviceHeartbeat(
+        device_id=d.id,
+        total_bytes=hb.total_bytes,
+        free_bytes=hb.free_bytes,
+        used_bytes=hb.used_bytes,
+    ))
+    db.commit()
+    return {"ok": True, "last_seen": d.last_seen.isoformat()}
+
 
 # List assignments to sync for this device
 @app.get("/api/agent/assignments")
@@ -362,7 +448,6 @@ def dashboard(current: models.User = Depends(get_current_user), db: Session = De
 
     total_storage_gb = sum(d.capacity_gb for d in devices) if devices else 0.0
 
-    # Used storage defined as sum of per-device assigned bytes
     used_bytes = 0
     per_device = []
     for d in devices:
@@ -374,7 +459,14 @@ def dashboard(current: models.User = Depends(get_current_user), db: Session = De
             or 0
         )
         used_bytes += d_used
-        per_device.append({"device_id": d.id, "device_name": d.name, "used_bytes": d_used, "capacity_gb": d.capacity_gb})
+        per_device.append({
+            "device_id": d.id,
+            "device_name": d.name,
+            "used_bytes": d_used,
+            "capacity_gb": d.capacity_gb,
+            "free_bytes": int(getattr(d, "free_bytes", 0)),
+           "last_seen": d.last_seen.isoformat() if getattr(d, "last_seen", None) else None,
+        })
 
     return {
         "total_devices": len(devices),
@@ -382,8 +474,47 @@ def dashboard(current: models.User = Depends(get_current_user), db: Session = De
         "used_storage_gb": round(used_bytes / (1024**3), 2),
         "total_files": len(files),
         "per_device": per_device,
-        "free_bytes": int(getattr(d, "free_bytes", 0)),
-        "last_sync": d.last_sync.isoformat() if d.last_sync else None,
-        "used_bytes": int(used_bytes),
+    }
 
+
+@app.get("/api/dashboard")
+def dashboard(current: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    devices = db.query(models.Device).filter(models.Device.user_id == current.id).all()
+    files = db.query(models.File).filter(models.File.user_id == current.id).all()
+
+    total_storage_gb = sum(float(d.capacity_gb or 0.0) for d in devices)
+
+    assigned_map = dict(
+        db.query(
+            models.Device.id,
+            func.coalesce(func.sum(models.File.size_bytes), 0)
+        )
+        .outerjoin(models.FileAssignment, models.Device.id == models.FileAssignment.device_id)
+        .outerjoin(models.File, models.File.id == models.FileAssignment.file_id)
+        .filter(models.Device.user_id == current.id)
+        .group_by(models.Device.id)
+        .all()
+    )
+
+    used_bytes_total = 0
+    per_device = []
+    for d in devices:
+        d_used = int(assigned_map.get(d.id, 0))
+        used_bytes_total += d_used
+        per_device.append({
+            "device_id": d.id,
+            "device_name": d.name,
+            "used_bytes": d_used,
+            "capacity_gb": float(d.capacity_gb or 0.0),
+            "free_bytes": int(getattr(d, "free_bytes", 0)),
+            "last_seen": d.last_seen.isoformat() if getattr(d, "last_seen", None) else None,
+        })
+
+    return {
+        "total_devices": len(devices),
+        "total_storage_gb": total_storage_gb,
+        "used_storage_gb": round(used_bytes_total / (1024**3), 2),
+        "total_files": len(files),
+        "per_device": per_device,
+        "used_bytes": int(used_bytes_total),
     }
