@@ -37,13 +37,107 @@ async function copyText(txt){
   }
 }
 
+function showAuth(){
+  const authScreen = document.getElementById('auth-screen');
+  const appShell   = document.getElementById('app-shell');
+  if (authScreen) authScreen.classList.remove('hidden');
+  if (appShell)   appShell.classList.add('hidden');
+}
+function showApp(){
+  const authScreen = document.getElementById('auth-screen');
+  const appShell   = document.getElementById('app-shell');
+  const userEmailEl = document.getElementById('user-email');
+  if (authScreen) authScreen.classList.add('hidden');
+  if (appShell)   appShell.classList.remove('hidden');
+
+  // (Optional) show email from token payload
+  try {
+    const payload = JSON.parse(atob(token().split('.')[1]));
+    if (userEmailEl && payload.email) userEmailEl.textContent = payload.email;
+  } catch {}
+  // Default view on entry
+  showView('dashboard');
+  loadDashboard();
+}
+
+// --- Wire login/register buttons ---
+function attachAuthHandlers(){
+  const btnLogin = document.getElementById('btn-login');
+  const btnRegister = document.getElementById('btn-register');
+  const emailEl = document.getElementById('email');
+  const passwordEl = document.getElementById('password');
+  const logoutBtn = document.getElementById('logout');
+
+  if (btnLogin) btnLogin.onclick = async () => {
+    try {
+      const email = emailEl.value.trim();
+      const password = passwordEl.value;
+      const r = await API.login(email, password); // calls /api/auth/login
+      if (!r || !r.token) throw new Error('Login failed');
+      setToken(r.token);
+      showApp();
+    } catch (e) {
+      alert(e.message || 'Login failed');
+    }
+  };
+
+  if (btnRegister) btnRegister.onclick = async () => {
+    try {
+      const email = emailEl.value.trim();
+      const password = passwordEl.value;
+      await API.register(email, password);       // calls /api/auth/register
+      const r = await API.login(email, password); // log in right after registering
+      setToken(r.token);
+      showApp();
+    } catch (e) {
+      alert(e.message || 'Register failed');
+    }
+  };
+
+  if (logoutBtn) logoutBtn.onclick = () => {
+    localStorage.removeItem('token');
+    showAuth();
+  };
+}
+
+// --- Bootstrap on load ---
+document.addEventListener('DOMContentLoaded', async () => {
+  if (typeof attachAuthHandlers === 'function') attachAuthHandlers();
+
+  const t = (typeof token === 'function') ? token() : null;
+  if (t) {
+    try {
+      await authGet('/api/devices');
+      if (typeof showApp === 'function') showApp();
+    } catch (e) {
+      try { localStorage.removeItem('token'); } catch {}
+      if (typeof showAuth === 'function') showAuth();
+    }
+  } else {
+    if (typeof showAuth === 'function') showAuth();
+  }
+});
+
+
+
 function token(){ return localStorage.getItem('token'); }
 function setToken(t){ localStorage.setItem('token', t); }
 function authHeaders(){ return token() ? {'Authorization': 'Bearer ' + token()} : {}; }
 
-async function authFetch(url, opts={}){
-  const res = await fetch(url, { ...opts, headers: { ...(opts.headers||{}), ...authHeaders()}});
-  if(!res.ok){ throw new Error((await res.json()).detail || 'Request failed'); }
+async function authFetch(url, opts = {}) {
+  const res = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), ...authHeaders() } });
+  if (!res.ok) {
+    let detail = 'Request failed';
+    try { detail = (await res.clone().json()).detail || detail; } catch (e) {
+      try { detail = (await res.text()).slice(0, 200); } catch {}
+    }
+    if (res.status === 401) {
+      try { localStorage.removeItem('token'); } catch {}
+      if (typeof showAuth === 'function') showAuth();
+      throw new Error('Invalid or expired token');
+    }
+    throw new Error(detail);
+  }
   return res.json();
 }
 async function authGet(url){ return authFetch(url); }
