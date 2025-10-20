@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, ForeignKey, Float, BigInteger, UniqueConstraint
+    Column, Integer, String, Boolean, DateTime, ForeignKey, Float, BigInteger, UniqueConstraint, func
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -7,11 +7,11 @@ from .database import Base
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    password_hash = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    __table_args__ = (UniqueConstraint('email', name='uq_user_email'),)
     devices = relationship("Device", back_populates="owner", cascade="all, delete-orphan")
     files   = relationship("File",   back_populates="owner", cascade="all, delete-orphan")
 

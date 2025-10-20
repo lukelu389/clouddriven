@@ -13,6 +13,10 @@ from .database import SessionLocal, engine, Base
 import backend.models as models
 from backend.auth import create_access_token, decode_token, get_password_hash, verify_password, get_current_user, get_db
 from pydantic import BaseModel
+from backend.auth import router as auth_router
+
+
+
 
 
 device_security = HTTPBearer(auto_error=False)
@@ -33,7 +37,7 @@ def get_device_by_token(
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="CloudDrive", version="0.1.0")
-
+app.include_router(auth_router)
 # Serve static frontend
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
