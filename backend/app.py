@@ -36,7 +36,7 @@ def get_device_by_token(
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="CloudDrive", version="0.1.0")
+app = FastAPI(title="Clouddriven", version="0.1.0")
 app.include_router(auth_router)
 # Serve static frontend
 static_dir = os.path.join(os.path.dirname(__file__), "static")
